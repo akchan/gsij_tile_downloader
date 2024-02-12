@@ -30,6 +30,8 @@ git clone https://github.com/akchan/gsij_tile_downloader.git
 
 cd gsij_tile_downloader
 
+pip install -r requirements.txt
+
 python gsij_tile_downloader.py
 ```
 
