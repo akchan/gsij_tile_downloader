@@ -6,9 +6,9 @@
 
 ### 背景
 
-国土地理院が実験的に配布している地図タイルダウンロードツール（[gsi-cyberjapan/tdlmn: 地理院タイルダウンロードツール](https://github.com/gsi-cyberjapan/tdlmn/tree/main)）は下の様な課題があります。
+国土地理院が実験的に配布している地図タイルダウンロードツール（[tdlmn](https://github.com/gsi-cyberjapan/tdlmn/tree/main)）がありますが、下のような課題があります。
 
-- windows環境でしか動作しない
+- Windows環境が想定されており、そのままでは他の環境で動作しない
 - 逐次的処理のためダウンロード完了まで時間がかかる
 
 gsij_tile_downloaderはこれらの課題を解消するために開発されました。
