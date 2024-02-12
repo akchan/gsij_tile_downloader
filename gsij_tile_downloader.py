@@ -7,10 +7,10 @@ import datetime
 import gzip
 import glob
 import hashlib
-import multiprocessing
 import os
 import queue
 import re
+from threading import Thread
 
 from PIL import Image
 import requests
@@ -126,11 +126,11 @@ def gen_gsij_tile_url(type, zoom, tile_x, tile_y):
     return f"https://cyberjapandata.gsi.go.jp/xyz/{type}/{zoom}/{tile_x}/{tile_y}.png"
 
 
-def prepare_md5_dict(dir_path, verbose=False):
+def prepare_md5_dict(map_dir, verbose=False):
     md5_dict = {}
 
     path_list = glob.glob(os.path.join(
-        dir_path, "**", "*.png"), recursive=True)
+        map_dir, "**", "*.png"), recursive=True)
 
     pattern_path = re.compile("[0-9]+/[0-9]+/[0-9]+.png")
 
@@ -142,7 +142,7 @@ def prepare_md5_dict(dir_path, verbose=False):
         if len(path_list) > 0:
             path = path_list[0]
         else:
-            print("Invalid path:", path_raw)
+            print("  Invalid path:", path_raw)
             continue
 
         with open(path_raw, "rb") as f:
@@ -173,7 +173,7 @@ def download(url, path, overwrite=False):
     return ret
 
 
-def download_worker(q: multiprocessing.JoinableQueue):
+def download_worker(q: queue.Queue):
     while True:
         try:
             entry = q.get()
@@ -187,11 +187,27 @@ def download_worker(q: multiprocessing.JoinableQueue):
             q.task_done()
 
 
+def prepare_queue_worker_threads(func, n_workers):
+    workers_list = []
+    shared_queue = queue.Queue()
+
+    for i in range(n_workers):
+        th = Thread(target=func,
+                    args=(shared_queue,),
+                    daemon=True)
+        th.start()
+        workers_list.append(th)
+
+    return shared_queue, workers_list
+
+
 def download_gsij_tile(type: str = "std",
                        target_zoom_levels=[8, 12, 14],
                        force_download=True,
-                       n_download_workers=10):
+                       n_download_workers=10,
+                       eps=1.0e-14):
     target_zoom_levels = list(map(lambda x: str(x), target_zoom_levels))
+    download_png_path_list = []
 
     map_dir = str(type)
     tmp_dir = os.path.join(map_dir, "tmp")
@@ -200,11 +216,12 @@ def download_gsij_tile(type: str = "std",
 
     # Prepare md5 hash of local files
     print("Checking md5 of local files")
-    md5_local = prepare_md5_dict(map_dir, True)
+    md5_local = prepare_md5_dict(map_dir, verbose=True)
 
     # Prepare merged latest nippo
     print("Preparing nippo files")
     nippo_manager = NippoManager(type, force_download)
+    print("Merging nippo files")
     date_list = nippo_manager.get_latest_nippo_dates()
     print(f"  from {date_list[0]} to {date_list[-1]}")
     nippo = nippo_manager.get_merged_latest_nippo_dict()
@@ -216,15 +233,8 @@ def download_gsij_tile(type: str = "std",
     # List tiles to download
     print("Checking mokuroku and find files to download")
     n_files_to_download = 0
-    download_queue = queue.Queue()
-    worker_list = []
-
-    for i in range(n_download_workers):
-        th = multiprocessing.Process(target=download_worker,
-                                     args=(download_queue,),
-                                     daemon=True)
-        th.start()
-        worker_list.append(th)
+    download_queue, workers_list = prepare_queue_worker_threads(
+        download_worker, n_download_workers)
 
     for i, entry in enumerate(mokuroku.reader):
         msg = "\r"
@@ -251,37 +261,79 @@ def download_gsij_tile(type: str = "std",
 
         url = gen_gsij_tile_url(type, zoom, x, y)
         tile_path = os.path.join(map_dir, path)
+        download_png_path_list.append(tile_path)
         download_queue.put([url, tile_path])
         n_files_to_download += 1
 
     print("")
+    print("Finished mokuroku checking")
 
-    while download_queue.qsize() > 0:
+    while True:
         n_rest = download_queue.qsize()
-        pct = 100.0 * n_rest / n_files_to_download
+        pct = 100.0 * n_rest / (n_files_to_download + eps)
 
         print("\rDownloading {:d} / {:d} ({:.1f}%)".format(
             n_rest,
             n_files_to_download,
             pct), end="")
 
+        if download_queue.qsize() == 0:
+            break
+
     # Wait finishing the last download
     download_queue.join()
 
-    print("Done")
+    return download_png_path_list
+
+
+def conv_map_png2jpg(type="std", png_path_list=None, jpg_quality=75):
+    src_dir = type
+    tgt_dir = str(type).rstrip("/") + "_jpg"
+
+    pattern_path = re.compile("[0-9]+/[0-9]+/[0-9]+.png")
+
+    job_list = []
+
+    if png_path_list is None:
+        png_path_list = glob.glob(os.path.join(
+            src_dir, "**", "*.png"), recursive=True)
+
+    for path_raw in png_path_list:
+        match_list = re.findall(pattern_path, path_raw)
+
+        if len(match_list) == 0:
+            print("Invalid path:", path_raw)
+            continue
+
+        tgt_path = os.path.join(tgt_dir,
+                                os.path.splitext(match_list[0])[0] + ".jpg")
+        job_list.append([path_raw, tgt_path])
+
+    for i, (src_path, tgt_path) in enumerate(job_list):
+        print(f"\r  {i+1:d} / {len(job_list):d}", end="")
+
+        img = Image.open(src_path).convert("RGB")
+
+        os.makedirs(os.path.dirname(tgt_path), exist_ok=True)
+
+        img.save(tgt_path, quality=jpg_quality)
 
 
 def main(type_list=["std"],
          target_zoom_levels=[8, 12, 14],
          force_download=False,
          n_download_workers=10,
-         remove_mokuroku=True,
-         remove_nippo=True):
+         remove_mokuroku=False,
+         remove_nippo=False,
+         conv_to_jpeg=True,
+         jpg_quality=75):
     for type in type_list:
         print("Map type:", type)
 
-        download_gsij_tile(type, target_zoom_levels,
-                           force_download, n_download_workers)
+        download_png_path_list = download_gsij_tile(type,
+                                                    target_zoom_levels,
+                                                    force_download,
+                                                    n_download_workers)
 
         if remove_mokuroku:
             Mokuroku.remove_file(type)
@@ -289,6 +341,12 @@ def main(type_list=["std"],
         if remove_nippo:
             nm = NippoManager(type)
             nm.remove_files()
+
+        if conv_to_jpeg:
+            print("Converting png to jpg")
+            conv_map_png2jpg(type, download_png_path_list, jpg_quality)
+
+        print("Done", type)
 
 
 if __name__ == '__main__':
