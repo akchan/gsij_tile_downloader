@@ -279,6 +279,7 @@ def download_gsij_tile(type: str = "std",
 
         if download_queue.qsize() == 0:
             break
+    print("")
 
     # Wait finishing the last download
     download_queue.join()
@@ -317,6 +318,7 @@ def conv_map_png2jpg(type="std", png_path_list=None, jpg_quality=75):
         os.makedirs(os.path.dirname(tgt_path), exist_ok=True)
 
         img.save(tgt_path, quality=jpg_quality)
+    print("")
 
 
 def main(type_list=["std"],
