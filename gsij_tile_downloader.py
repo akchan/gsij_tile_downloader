@@ -287,31 +287,55 @@ def download_gsij_tile(type: str = "std",
     return download_png_path_list
 
 
-def conv_map_png2jpg(type="std", png_path_list=None, jpg_quality=75):
-    src_dir = type
-    tgt_dir = str(type).rstrip("/") + "_jpg"
+def gen_jpg_path_from_png(png_path, pattern=re.compile("[0-9]+/[0-9]+/[0-9]+.png")):
+    match_list = re.findall(pattern, png_path)
 
-    pattern_path = re.compile("[0-9]+/[0-9]+/[0-9]+.png")
+    if len(match_list) == 0:
+        return None
 
-    job_list = []
+    return os.path.join(os.path.splitext(match_list[0])[0] + ".jpg")
 
-    if png_path_list is None:
-        png_path_list = glob.glob(os.path.join(
-            src_dir, "**", "*.png"), recursive=True)
 
-    for path_raw in png_path_list:
-        match_list = re.findall(pattern_path, path_raw)
+def conv_map_png2jpg(type="std", png_path_list=[], jpg_quality=75):
+    src_dir = str(type)
+    tgt_dir = src_dir.rstrip("/") + "_jpg"
 
-        if len(match_list) == 0:
+    job_dict = {}
+
+    # Prepare job dict
+    # Files not converted to jpeg
+    for path_raw in glob.glob(os.path.join(
+            src_dir, "**", "*.png"), recursive=True):
+        jpg_path = gen_jpg_path_from_png(path_raw)
+
+        if jpg_path is None:
             print("Invalid path:", path_raw)
             continue
 
-        tgt_path = os.path.join(tgt_dir,
-                                os.path.splitext(match_list[0])[0] + ".jpg")
-        job_list.append([path_raw, tgt_path])
+        tgt_path = os.path.join(tgt_dir, jpg_path)
 
-    for i, (src_path, tgt_path) in enumerate(job_list):
-        print(f"\r  {i+1:d} / {len(job_list):d}", end="")
+        if not os.path.exists(tgt_path):
+            job_dict[path_raw] = tgt_path
+
+    # Files must be converted to jpeg
+    for png_path in png_path_list:
+        jpg_path = gen_jpg_path_from_png(png_path)
+
+        if jpg_path is None:
+            print("Invalid path:", path_raw)
+            continue
+
+        tgt_path = os.path.join(tgt_dir, jpg_path)
+
+        job_dict[path_raw] = tgt_path
+
+    # Convert png to jpeg
+    for i, (src_path, tgt_path) in enumerate(job_dict.items()):
+        print(f"\r  {i+1:d} / {len(job_dict):d}", end="")
+
+        if not os.path.isfile(src_path):
+            print("File not found:", src_path)
+            continue
 
         img = Image.open(src_path).convert("RGB")
 
