@@ -187,7 +187,7 @@ def download_worker(q: queue.Queue):
             q.task_done()
 
 
-def prepare_queue_worker_threads(func, n_workers):
+def prepare_queue_and_worker_threads(func, n_workers):
     workers_list = []
     shared_queue = queue.Queue()
 
@@ -233,7 +233,7 @@ def download_gsij_tile(type: str = "std",
     # List tiles to download
     print("Checking mokuroku and find files to download")
     n_files_to_download = 0
-    download_queue, workers_list = prepare_queue_worker_threads(
+    download_queue, workers_list = prepare_queue_and_worker_threads(
         download_worker, n_download_workers)
 
     for i, entry in enumerate(mokuroku.reader):
